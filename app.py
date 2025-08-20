@@ -4,7 +4,6 @@ import qrcode
 import cv2
 import numpy as np
 import io
-import math
 
 # --- Read QR code using OpenCV ---
 def read_qr_code(image):
@@ -25,38 +24,46 @@ def generate_split_qrs(base_text, count):
         qr_images.append((data, img))
     return qr_images
 
-# --- Arrange on A4 ---
+# --- Arrange on A4 with custom QR slots ---
 def arrange_on_a4(qr_images):
-    A4_WIDTH, A4_HEIGHT = 2480, 3508  # 300 DPI
-    cols = 4
-    qr_size = 500
-    x_margin = 80
-    y_margin = 80
-    x_spacing = (A4_WIDTH - (cols * qr_size) - (2 * x_margin)) // (cols - 1)
-    y_spacing = 100
+    A4_WIDTH, A4_HEIGHT = 2480, 3508  # A4 at 300 DPI
+    qr_height = 300   # 1 inch
+    slot_width = 750  # 2.5 inches
+    margin = 100
+    spacing = 50
 
     sheet = Image.new("RGB", (A4_WIDTH, A4_HEIGHT), "white")
     draw = ImageDraw.Draw(sheet)
 
-    x, y = x_margin, y_margin
+    x = margin
+    y = margin
 
     for idx, (label, img) in enumerate(qr_images):
-        img_resized = img.resize((qr_size, qr_size))
-        sheet.paste(img_resized, (x, y))
-        text_x = x + (qr_size // 2) - (len(label) * 7)
-        draw.text((text_x, y + qr_size + 10), label, fill="black")
+        # Keep QR square inside slot (300x300 px)
+        qr_square_size = qr_height
+        img_resized = img.resize((qr_square_size, qr_square_size))
 
-        if (idx + 1) % cols == 0:
-            x = x_margin
-            y += qr_size + y_spacing + 40
-        else:
-            x += qr_size + x_spacing
+        # Paste QR on the left side of slot
+        sheet.paste(img_resized, (x, y))
+
+        # Draw label on right side of slot (centered vertically)
+        text_x = x + qr_square_size + 20
+        text_y = y + (qr_square_size // 2) - 10
+        draw.text((text_x, text_y), label, fill="black")
+
+        # Move down vertically
+        y += qr_height + spacing
+
+        # If bottom exceeded, go to next column
+        if y + qr_height > A4_HEIGHT - margin:
+            y = margin
+            x += slot_width + spacing
 
     return sheet
 
 # --- Streamlit UI ---
-st.title("📦 QR Code Generator & Splitter")
-st.write("Generate a new QR code or upload an existing QR code to split it into multiple QR codes.")
+st.title("📦 Sample Room - QR Splitter")
+st.write("Generate a new QR code or upload an existing QR code to split it into multiple QR codes, with fixed slot size (2.5 × 1 inch).")
 
 mode = st.radio("Select mode:", ("Upload & Split", "Generate & Split"))
 
@@ -112,3 +119,4 @@ elif mode == "Generate & Split":
             )
 
             st.image(sheet, caption="Preview of A4 sheet", use_column_width=True)
+
