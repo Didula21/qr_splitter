@@ -57,7 +57,7 @@ def arrange_labels(qr_images):
     return sheet
 
 # --- Streamlit UI ---
-st.title("🏷️ QR Code Label Generator")
+st.title("Sample Room - QR Splitter ")
 st.write("Generate vertical labels (1″ × 2.5″ each) with QR code + text. PDF height adjusts with number of labels.")
 
 mode = st.radio("Select mode:", ("Upload & Split", "Generate & Split"))
