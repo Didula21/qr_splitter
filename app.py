@@ -24,7 +24,7 @@ def generate_split_qrs(base_text, count):
         qr_images.append((data, img))
     return qr_images
 
-# --- Arrange as vertical labels ---
+# --- Arrange as bordered vertical labels ---
 def arrange_labels(qr_images):
     DPI = 300
     LABEL_WIDTH = 300   # 1 inch
@@ -39,26 +39,35 @@ def arrange_labels(qr_images):
         # Position of the label block
         y_start = idx * LABEL_HEIGHT
 
-        # Resize QR to fit width (leave margin)
-        qr_size = LABEL_WIDTH - 40
+        # --- Draw border for label ---
+        border_thickness = 6
+        draw.rectangle(
+            [0, y_start, LABEL_WIDTH - 1, y_start + LABEL_HEIGHT - 1],
+            outline="black",
+            width=border_thickness
+        )
+
+        # Resize QR to fit width (leave margin inside border)
+        qr_size = LABEL_WIDTH - 60
         img_resized = img.resize((qr_size, qr_size))
 
         # Center QR
         x_qr = (LABEL_WIDTH - qr_size) // 2
-        y_qr = y_start + 50
+        y_qr = y_start + 40
         sheet.paste(img_resized, (x_qr, y_qr))
 
         # Draw text (centered under QR)
         text = label
-        text_x = LABEL_WIDTH // 2 - (len(text) * 6)  # rough centering
-        text_y = y_start + qr_size + 100
+        text_w = len(text) * 12  # rough width estimation
+        text_x = (LABEL_WIDTH - text_w) // 2
+        text_y = y_start + qr_size + 120
         draw.text((text_x, text_y), text, fill="black")
 
     return sheet
 
 # --- Streamlit UI ---
 st.title("Sample Room - QR Splitter ")
-st.write("Generate vertical labels (1″ × 2.5″ each) with QR code + text. PDF height adjusts with number of labels.")
+st.write("Each label is 1″ × 2.5″ with a QR code and text inside a thick border. PDF height grows with label count.")
 
 mode = st.radio("Select mode:", ("Upload & Split", "Generate & Split"))
 
