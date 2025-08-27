@@ -1,5 +1,5 @@
 import streamlit as st
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import qrcode
 import cv2
 import numpy as np
@@ -24,56 +24,56 @@ def generate_split_qrs(base_text, count):
         qr_images.append((data, img))
     return qr_images
 
-# --- Arrange as bordered vertical labels ---
-def arrange_labels(qr_images):
+# --- Create label pages ---
+def create_label_pages(qr_images):
     DPI = 300
-    LABEL_WIDTH = 300   # 1 inch
-    LABEL_HEIGHT = 750  # 2.5 inches
+    LABEL_WIDTH = 300      # 1 inch
+    LABEL_HEIGHT = 750     # 2.5 inch
+    qr_size = 220          # QR inside label
+    border_thickness = 5
 
-    # Final sheet height depends on number of labels
-    sheet_height = LABEL_HEIGHT * len(qr_images)
-    sheet = Image.new("RGB", (LABEL_WIDTH, sheet_height), "white")
-    draw = ImageDraw.Draw(sheet)
+    pages = []
+    for label, qr_img in qr_images:
+        # Create blank label
+        page = Image.new("RGB", (LABEL_WIDTH, LABEL_HEIGHT), "white")
+        draw = ImageDraw.Draw(page)
 
-    for idx, (label, img) in enumerate(qr_images):
-        # Position of the label block
-        y_start = idx * LABEL_HEIGHT
+        # Draw border
+        for i in range(border_thickness):
+            draw.rectangle([i, i, LABEL_WIDTH - i - 1, LABEL_HEIGHT - i - 1], outline="black")
 
-        # --- Draw border for label ---
-        border_thickness = 6
-        draw.rectangle(
-            [0, y_start, LABEL_WIDTH - 1, y_start + LABEL_HEIGHT - 1],
-            outline="black",
-            width=border_thickness
-        )
+        # Resize QR
+        qr_resized = qr_img.resize((qr_size, qr_size))
 
-        # Resize QR to fit width (leave margin inside border)
-        qr_size = LABEL_WIDTH - 60
-        img_resized = img.resize((qr_size, qr_size))
+        # Paste QR centered at top
+        qr_x = (LABEL_WIDTH - qr_size) // 2
+        qr_y = 50
+        page.paste(qr_resized, (qr_x, qr_y))
 
-        # Center QR
-        x_qr = (LABEL_WIDTH - qr_size) // 2
-        y_qr = y_start + 40
-        sheet.paste(img_resized, (x_qr, y_qr))
+        # Add text below QR
+        try:
+            font = ImageFont.truetype("arial.ttf", 36)  # Large text
+        except:
+            font = ImageFont.load_default()
 
-        # Draw text (centered under QR)
-        text = label
-        text_w = len(text) * 12  # rough width estimation
+        text_w, text_h = draw.textsize(label, font=font)
         text_x = (LABEL_WIDTH - text_w) // 2
-        text_y = y_start + qr_size + 120
-        draw.text((text_x, text_y), text, fill="black")
+        text_y = qr_y + qr_size + 30
+        draw.text((text_x, text_y), label, font=font, fill="black")
 
-    return sheet
+        pages.append(page)
+
+    return pages
 
 # --- Streamlit UI ---
-st.title("Sample Room - QR Splitter ")
-st.write("Each label is 1″ × 2.5″ with a QR code and text inside a thick border. PDF height grows with label count.")
+st.title("🏷️ QR Code Label Generator")
+st.write("Generate QR labels (1 inch × 2.5 inch), one per PDF page.")
 
 mode = st.radio("Select mode:", ("Upload & Split", "Generate & Split"))
 
 if mode == "Upload & Split":
     uploaded_file = st.file_uploader("Upload your QR code (PNG/JPG)", type=["png", "jpg", "jpeg"])
-    count = st.number_input("Number of splits", min_value=1, value=2)
+    count = st.number_input("Number of splits", min_value=1, value=3)
 
     if uploaded_file:
         image = Image.open(uploaded_file)
@@ -81,46 +81,47 @@ if mode == "Upload & Split":
 
         if base_text:
             st.success(f"QR Code content: `{base_text}`")
-            if st.button("Generate Label QRs"):
+            if st.button("Generate Split QRs"):
                 qr_images = generate_split_qrs(base_text, count)
-                sheet = arrange_labels(qr_images)
+                pages = create_label_pages(qr_images)
 
                 pdf_buffer = io.BytesIO()
-                sheet.save(pdf_buffer, format="PDF", dpi=(300,300))
+                pages[0].save(pdf_buffer, format="PDF", save_all=True, append_images=pages[1:])
                 pdf_buffer.seek(0)
 
                 st.download_button(
-                    label="📄 Download Label PDF",
+                    label="📄 Download PDF (Labels)",
                     data=pdf_buffer,
-                    file_name="labels.pdf",
+                    file_name="split_labels.pdf",
                     mime="application/pdf"
                 )
 
-                st.image(sheet, caption="Preview of Labels", use_column_width=True)
+                st.image(pages[0], caption="Preview of first label", use_column_width=False)
         else:
             st.error("Could not read QR code from the image.")
 
 elif mode == "Generate & Split":
     text_input = st.text_input("Enter text for QR code:")
-    count = st.number_input("Number of splits", min_value=1, value=2)
+    count = st.number_input("Number of splits", min_value=1, value=1)
 
-    if st.button("Generate Label QR(s)"):
+    if st.button("Generate QR(s)"):
         if text_input.strip() == "":
             st.error("Please enter some text.")
         else:
             qr_images = generate_split_qrs(text_input.strip(), count)
-            sheet = arrange_labels(qr_images)
+            pages = create_label_pages(qr_images)
 
             pdf_buffer = io.BytesIO()
-            sheet.save(pdf_buffer, format="PDF", dpi=(300,300))
+            pages[0].save(pdf_buffer, format="PDF", save_all=True, append_images=pages[1:])
             pdf_buffer.seek(0)
 
             st.download_button(
-                label="📄 Download Label PDF",
+                label="📄 Download PDF (Labels)",
                 data=pdf_buffer,
-                file_name="labels.pdf",
+                file_name="generated_labels.pdf",
                 mime="application/pdf"
             )
 
-            st.image(sheet, caption="Preview of Labels", use_column_width=True)
+            st.image(pages[0], caption="Preview of first label", use_column_width=False)
+
 
