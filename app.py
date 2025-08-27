@@ -10,14 +10,12 @@ import numpy as np
 # Helpers
 # -----------------------
 def read_qr_code(image: Image.Image):
-    """Decode a QR code from a PIL image using OpenCV."""
     img_array = np.array(image.convert("RGB"))
     detector = cv2.QRCodeDetector()
     data, bbox, _ = detector.detectAndDecode(img_array)
     return data if data else None
 
 def generate_split_qrs(base_text: str, count: int):
-    """Generate a list of (label_text, PIL_QR_Image) tuples."""
     out = []
     for i in range(1, count + 1):
         data = f"{base_text}-{i}" if count > 1 else base_text
@@ -33,8 +31,7 @@ def generate_split_qrs(base_text: str, count: int):
         out.append((data, img))
     return out
 
-def _load_font(size: int) -> ImageFont.ImageFont:
-    """Try a reliable TTF first; fallback to default."""
+def _load_font(size: int):
     for name in ("DejaVuSans.ttf", "arial.ttf"):
         try:
             return ImageFont.truetype(name, size)
@@ -42,8 +39,7 @@ def _load_font(size: int) -> ImageFont.ImageFont:
             continue
     return ImageFont.load_default()
 
-def _text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont):
-    """Measure text width/height robustly across Pillow versions."""
+def _text_size(draw, text, font):
     if hasattr(draw, "textbbox"):
         left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
         return right - left, bottom - top
@@ -56,8 +52,9 @@ def create_label_pages(
     dpi=300,
     border_thickness_px=2,
     qr_width_ratio=0.75,
-    font_width_ratio=0.40,
+    text_scale=0.30,             # smaller SR text
     vertical_spacing_px=20,
+    qr_shift_up_px=20,           # move QR up by 20px
     inner_margin_px=8
 ):
     LABEL_W = int(round(label_width_in * dpi))
@@ -69,15 +66,15 @@ def create_label_pages(
         page = Image.new("RGB", (LABEL_W, LABEL_H), "white")
         draw = ImageDraw.Draw(page)
 
-        # Draw thin border
+        # Border
         for i in range(border_thickness_px):
             draw.rectangle([i, i, LABEL_W - 1 - i, LABEL_H - 1 - i], outline="black")
 
         # Resize QR
         qr_resized = qr_img.resize((qr_size, qr_size))
 
-        # Font sizing and auto-shrink
-        base_font_size = max(8, int(qr_size * font_width_ratio))
+        # Font sizing
+        base_font_size = max(8, int(qr_size * text_scale))
         font = _load_font(base_font_size)
         max_text_width = LABEL_W - 2 * inner_margin_px
         tw, th = _text_size(draw, label_text, font)
@@ -86,16 +83,12 @@ def create_label_pages(
             font = _load_font(base_font_size)
             tw, th = _text_size(draw, label_text, font)
 
-        # Vertical centering of [QR + spacing + text]
-        content_height = qr_size + vertical_spacing_px + th
-        start_y = max(inner_margin_px, (LABEL_H - content_height) // 2)
-
-        # Paste QR centered horizontally
+        # Position QR higher than centered
         qr_x = (LABEL_W - qr_size) // 2
-        qr_y = start_y
+        qr_y = max(inner_margin_px, (LABEL_H - qr_size - th - vertical_spacing_px) // 2 - qr_shift_up_px)
         page.paste(qr_resized, (qr_x, qr_y))
 
-        # Draw text centered under QR
+        # Position text under QR
         text_x = (LABEL_W - tw) // 2
         text_y = qr_y + qr_size + vertical_spacing_px
         draw.text((text_x, text_y), label_text, font=font, fill="black")
@@ -115,17 +108,17 @@ def save_pages_to_pdf_bytes(pages, dpi=300) -> bytes:
 # -----------------------
 # Streamlit UI
 # -----------------------
-st.title("🏷️ QR Label PDF (1\" × 2.5\", one per page)")
-st.caption("Thin border • QR vertically centered • Text scales with QR width")
+st.title("🏷️ QR Label PDF (1\" × 2.5\")")
+st.caption("Thin border • QR slightly higher • Smaller SR text")
 
-# NOTE: Removed `horizontal=True` for compatibility with older Streamlit versions
 mode = st.radio("Mode", ["Upload & Split", "Generate & Split"])
 
 with st.expander("Advanced layout (optional)", expanded=False):
     qr_width_ratio = st.slider("QR width (% of label width)", 50, 90, 75, step=1) / 100.0
-    font_width_ratio = st.slider("Text height (~% of QR width)", 20, 60, 40, step=1) / 100.0
+    text_scale = st.slider("SR text scale (relative to QR)", 20, 60, 30, step=1) / 100.0
     border_thickness_px = st.slider("Border thickness (px)", 1, 6, 2, step=1)
     vertical_spacing_px = st.slider("Spacing between QR and text (px)", 0, 60, 20, step=2)
+    qr_shift_up_px = st.slider("Shift QR upward (px)", 0, 60, 20, step=2)
 
 count = st.number_input("Number of splits", min_value=1, value=3, step=1)
 
@@ -142,9 +135,10 @@ if mode == "Upload & Split":
                 pages = create_label_pages(
                     qr_images,
                     qr_width_ratio=qr_width_ratio,
-                    font_width_ratio=font_width_ratio,
+                    text_scale=text_scale,
                     border_thickness_px=border_thickness_px,
                     vertical_spacing_px=vertical_spacing_px,
+                    qr_shift_up_px=qr_shift_up_px,
                 )
                 pdf_bytes = save_pages_to_pdf_bytes(pages, dpi=300)
 
@@ -159,7 +153,7 @@ if mode == "Upload & Split":
         else:
             st.error("Could not read a QR code from the uploaded image.")
 
-else:  # Generate & Split
+else:
     text_input = st.text_input("Enter base text / SR")
     if st.button("Generate PDF"):
         if not text_input.strip():
@@ -169,9 +163,10 @@ else:  # Generate & Split
             pages = create_label_pages(
                 qr_images,
                 qr_width_ratio=qr_width_ratio,
-                font_width_ratio=font_width_ratio,
+                text_scale=text_scale,
                 border_thickness_px=border_thickness_px,
                 vertical_spacing_px=vertical_spacing_px,
+                qr_shift_up_px=qr_shift_up_px,
             )
             pdf_bytes = save_pages_to_pdf_bytes(pages, dpi=300)
 
