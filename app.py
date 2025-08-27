@@ -1,102 +1,138 @@
-import qrcode
+import io
+import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
+import qrcode
+import cv2
+import numpy as np
 
 # -----------------------
-# 1. Generate QR codes
+# Helpers
 # -----------------------
-def generate_qr_codes(serial_numbers):
-    qr_images = []
-    for sn in serial_numbers:
+def read_qr_code(image: Image.Image):
+    """Decode a QR code from a PIL image using OpenCV."""
+    img_array = np.array(image.convert("RGB"))
+    detector = cv2.QRCodeDetector()
+    data, bbox, _ = detector.detectAndDecode(img_array)
+    return data if data else None
+
+def generate_split_qrs(base_text: str, count: int):
+    """Generate a list of (label_text, PIL_QR_Image) tuples."""
+    out = []
+    for i in range(1, count + 1):
+        data = f"{base_text}-{i}" if count > 1 else base_text
         qr = qrcode.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_H,
+            version=None,  # let lib pick
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
             box_size=10,
             border=2,
         )
-        qr.add_data(sn)
+        qr.add_data(data)
         qr.make(fit=True)
         img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-        qr_images.append((sn, img))
-    return qr_images
+        out.append((data, img))
+    return out
 
+def _load_font(size: int) -> ImageFont.FreeTypeFont:
+    """Try a reliable TTF first; fallback to default."""
+    # DejaVuSans ships with Pillow and is available on Streamlit Cloud
+    for name in ["DejaVuSans.ttf", "arial.ttf"]:
+        try:
+            return ImageFont.truetype(name, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
 
-# -----------------------
-# 2. Create label pages
-# -----------------------
-def create_label_pages(qr_images):
-    DPI = 300
-    LABEL_WIDTH = int(1 * DPI)      # 1 inch wide
-    LABEL_HEIGHT = int(2.5 * DPI)   # 2.5 inch tall
-    qr_size = int(LABEL_WIDTH * 0.7)  # QR fills ~70% of width
-    border_thickness = 3            # thin border
+def _text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont):
+    """Measure text width/height robustly across Pillow versions."""
+    if hasattr(draw, "textbbox"):
+        left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+        return right - left, bottom - top
+    # Fallback
+    return draw.textsize(text, font=font)
+
+def create_label_pages(
+    qr_images,
+    label_width_in=1.0,
+    label_height_in=2.5,
+    dpi=300,
+    border_thickness_px=2,
+    qr_width_ratio=0.75,    # QR width as % of label width
+    font_width_ratio=0.40,  # starting font height ~ % of QR width
+    vertical_spacing_px=20, # space between QR and text
+    inner_margin_px=8       # margin from border to content
+):
+    """
+    Build one PIL Image per label (each = one page).
+    QR is centered vertically; text below QR.
+    Font size scales with QR width and auto-shrinks to fit label width.
+    """
+    LABEL_W = int(round(label_width_in * dpi))   # 1" => 300 px
+    LABEL_H = int(round(label_height_in * dpi))  # 2.5" => 750 px
+    qr_size = int(LABEL_W * qr_width_ratio)
 
     pages = []
-    for label, qr_img in qr_images:
-        # Create blank label page
-        page = Image.new("RGB", (LABEL_WIDTH, LABEL_HEIGHT), "white")
+    for label_text, qr_img in qr_images:
+        page = Image.new("RGB", (LABEL_W, LABEL_H), "white")
         draw = ImageDraw.Draw(page)
 
-        # Draw border
-        for i in range(border_thickness):
-            draw.rectangle([i, i, LABEL_WIDTH - i - 1, LABEL_HEIGHT - i - 1], outline="black")
+        # Border
+        for i in range(border_thickness_px):
+            draw.rectangle([i, i, LABEL_W - 1 - i, LABEL_H - 1 - i], outline="black")
 
-        # Resize QR
+        # Resize QR & paste
         qr_resized = qr_img.resize((qr_size, qr_size))
+        # We'll center the block [QR + spacing + text] vertically:
+        # Determine font size starting guess (scaled to QR width)
+        base_font_size = max(8, int(qr_size * font_width_ratio))
+        font = _load_font(base_font_size)
 
-        # Dynamically set font size based on QR width
-        font_size = int(qr_size * 0.35)  # ~35% of QR width
-        try:
-            font = ImageFont.truetype("arial.ttf", font_size)
-        except:
-            font = ImageFont.load_default()
+        # Auto-shrink font to ensure text fits within label width minus margins
+        max_text_width = LABEL_W - 2 * inner_margin_px
+        tw, th = _text_size(draw, label_text, font)
+        while (tw > max_text_width) and (base_font_size > 8):
+            base_font_size -= 1
+            font = _load_font(base_font_size)
+            tw, th = _text_size(draw, label_text, font)
 
-        # Get text size
-        if hasattr(draw, "textbbox"):  # Newer Pillow
-            bbox = draw.textbbox((0, 0), label, font=font)
-            text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        else:  # Older Pillow
-            text_w, text_h = draw.textsize(label, font=font)
+        content_height = qr_size + vertical_spacing_px + th
+        start_y = max(inner_margin_px, (LABEL_H - content_height) // 2)
 
-        # Total content height (QR + text + spacing)
-        spacing = 20
-        content_height = qr_size + spacing + text_h
+        # Center QR horizontally
+        qr_x = (LABEL_W - qr_size) // 2
+        qr_y = start_y
+        page.paste(qr_resized, (qr_x, qr_y))
 
-        # Start Y so content is vertically centered
-        start_y = (LABEL_HEIGHT - content_height) // 2
-
-        # Paste QR centered
-        qr_x = (LABEL_WIDTH - qr_size) // 2
-        page.paste(qr_resized, (qr_x, start_y))
-
-        # Draw text centered under QR
-        text_x = (LABEL_WIDTH - text_w) // 2
-        text_y = start_y + qr_size + spacing
-        draw.text((text_x, text_y), label, font=font, fill="black")
+        # Draw text centered below QR
+        text_x = (LABEL_W - tw) // 2
+        text_y = qr_y + qr_size + vertical_spacing_px
+        draw.text((text_x, text_y), label_text, font=font, fill="black")
 
         pages.append(page)
 
     return pages
 
+def save_pages_to_pdf_bytes(pages, dpi=300) -> bytes:
+    """Save a list of PIL Images as a multipage PDF into bytes."""
+    if not pages:
+        return b""
+    buf = io.BytesIO()
+    # resolution sets intended physical size mapping (points) in PDF
+    pages[0].save(
+        buf, format="PDF", save_all=True, append_images=pages[1:], resolution=float(dpi)
+    )
+    buf.seek(0)
+    return buf.getvalue()
 
 # -----------------------
-# 3. Save as multi-page PDF
+# Streamlit UI
 # -----------------------
-def save_as_pdf(pages, filename="labels.pdf"):
-    if pages:
-        pages[0].save(filename, save_all=True, append_images=pages[1:])
-        print(f"✅ PDF saved as {filename}")
+st.title("🏷️ QR Label PDF (1\" × 2.5\", one per page)")
+st.caption("Thin border • QR vertically centered • Text scales with QR width")
 
+mode = st.radio("Mode", ["Upload & Split", "Generate & Split"], horizontal=True)
 
-# -----------------------
-# MAIN
-# -----------------------
-if __name__ == "__main__":
-    # Example serial numbers
-    serial_numbers = ["SR001", "SR002", "SR003", "SR004"]
+with st.expander("Advanced layout (optional)"
 
-    qr_images = generate_qr_codes(serial_numbers)
-    pages = create_label_pages(qr_images)
-    save_as_pdf(pages, "labels.pdf")
 
 
 
