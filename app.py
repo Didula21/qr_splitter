@@ -108,8 +108,8 @@ def save_pages_to_pdf_bytes(pages, dpi=300) -> bytes:
 # -----------------------
 # Streamlit UI
 # -----------------------
-st.title("🏷️ QR Label PDF (1\" × 2.5\")")
-st.caption("Thin border • QR slightly higher • Smaller SR text")
+st.title("QR Split Label Genrator - Sample Room")
+st.caption("Sample Tracking Ssytem - MOS")
 
 mode = st.radio("Mode", ["Upload & Split", "Generate & Split"])
 
